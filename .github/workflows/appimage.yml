@@ -64,7 +64,7 @@ jobs:
           - { arch: aarch64, runner: ubuntu-24.04-arm }
     runs-on: ${{ matrix.target.runner }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Debian archive keyring (verifies the Debian 12 Qt packages)
         run: sudo apt-get update -q && sudo apt-get install -y -q debian-archive-keyring
       - name: Build
@@ -73,7 +73,7 @@ jobs:
           TAG: ${{ matrix.release.tag }}
           OUTDIR: dist
         run: ./build.sh
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: appimage-${{ matrix.release.tag }}-${{ matrix.target.arch }}
           path: dist/*.AppImage
@@ -87,7 +87,7 @@ jobs:
         release: ${{ fromJSON(needs.plan.outputs.releases) }}
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           pattern: appimage-${{ matrix.release.tag }}-*
           path: dist
