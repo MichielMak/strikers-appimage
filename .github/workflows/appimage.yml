@@ -1,0 +1,126 @@
+name: AppImage per upstream release
+
+# Every 6 hours: find new-coke/strikers releases that have no release here yet,
+# build an x86_64 and an aarch64 AppImage for each, and publish them under the
+# same tag. Prereleases upstream stay prereleases here.
+on:
+  schedule:
+    - cron: "23 */6 * * *"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Upstream tag to (re)build, e.g. v1.9.7. Empty: every missing release."
+        required: false
+        default: ""
+
+permissions:
+  contents: write
+
+concurrency:
+  group: appimage
+  cancel-in-progress: false
+
+env:
+  UPSTREAM: new-coke/strikers
+
+jobs:
+  plan:
+    runs-on: ubuntu-24.04
+    outputs:
+      releases: ${{ steps.plan.outputs.releases }}
+      latest: ${{ steps.plan.outputs.latest }}
+    steps:
+      - id: plan
+        env:
+          GH_TOKEN: ${{ github.token }}
+          INPUT_TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+          # Newest 5 upstream releases with Linux tarballs for both arches.
+          gh api "repos/$UPSTREAM/releases?per_page=20" --jq '
+            [.[] | select(.draft | not)
+                 | select([.assets[].name] | (index("strikers-linux-x86_64.tar.gz") and index("strikers-linux-arm64.tar.gz")))
+                 | {tag: .tag_name, prerelease: .prerelease}][:5]' > upstream.json
+          gh api "repos/$GITHUB_REPOSITORY/releases?per_page=100" --jq '[.[].tag_name]' > ours.json
+          if [ -n "$INPUT_TAG" ]; then
+            gh api "repos/$UPSTREAM/releases/tags/$INPUT_TAG" --jq '[{tag: .tag_name, prerelease: .prerelease}]' > todo.json
+          else
+            jq -c --slurpfile ours ours.json '[.[] | select(.tag as $t | $ours[0] | index($t) | not)]' upstream.json > todo.json
+          fi
+          latest=$(gh api "repos/$UPSTREAM/releases/latest" --jq .tag_name)
+          echo "to build: $(cat todo.json)"
+          echo "releases=$(jq -c . todo.json)" >> "$GITHUB_OUTPUT"
+          echo "latest=$latest" >> "$GITHUB_OUTPUT"
+
+  build:
+    needs: plan
+    if: needs.plan.outputs.releases != '[]'
+    strategy:
+      fail-fast: false
+      matrix:
+        release: ${{ fromJSON(needs.plan.outputs.releases) }}
+        target:
+          - { arch: x86_64, runner: ubuntu-24.04 }
+          - { arch: aarch64, runner: ubuntu-24.04-arm }
+    runs-on: ${{ matrix.target.runner }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Debian archive keyring (verifies the Debian 12 Qt packages)
+        run: sudo apt-get update -q && sudo apt-get install -y -q debian-archive-keyring
+      - name: Build
+        env:
+          ARCH: ${{ matrix.target.arch }}
+          TAG: ${{ matrix.release.tag }}
+          OUTDIR: dist
+        run: ./build.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: appimage-${{ matrix.release.tag }}-${{ matrix.target.arch }}
+          path: dist/*.AppImage
+          if-no-files-found: error
+
+  release:
+    needs: [plan, build]
+    strategy:
+      fail-fast: false
+      matrix:
+        release: ${{ fromJSON(needs.plan.outputs.releases) }}
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: appimage-${{ matrix.release.tag }}-*
+          path: dist
+          merge-multiple: true
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ matrix.release.tag }}
+          PRERELEASE: ${{ matrix.release.prerelease }}
+          LATEST: ${{ needs.plan.outputs.latest }}
+        run: |
+          set -euo pipefail
+          cd dist
+          sha256sum *.AppImage > SHA256SUMS
+          cat > notes.md <<EOF
+          AppImage of [new-coke/strikers $TAG](https://github.com/$UPSTREAM/releases/tag/$TAG), repackaged unchanged with Qt 6.4 for the settings app.
+
+          Needs glibc 2.35 or newer (Ubuntu 22.04, Debian 12, Fedora 36, SteamOS or later) and your own disc image.
+
+          \`\`\`sh
+          chmod +x Super_Mario_Strikers-$TAG-x86_64.AppImage
+          ./Super_Mario_Strikers-$TAG-x86_64.AppImage          # settings: Disc Image..., then Play
+          ./Super_Mario_Strikers-$TAG-x86_64.AppImage --game   # start the game directly
+          \`\`\`
+
+          Config: \`~/.config/strikers/strikers.ini\`. Saves: \`~/.local/share/Super Mario Strikers\`.
+          EOF
+          flags=(--latest=false)
+          [ "$PRERELEASE" = "true" ] && flags=(--prerelease --latest=false)
+          [ "$TAG" = "$LATEST" ] && [ "$PRERELEASE" != "true" ] && flags=(--latest)
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload "$TAG" --repo "$GITHUB_REPOSITORY" --clobber *.AppImage SHA256SUMS
+          else
+            gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --title "Super Mario Strikers $TAG" \
+              --notes-file notes.md "${flags[@]}" *.AppImage SHA256SUMS
+          fi

@@ -1,0 +1,31 @@
+#!/bin/sh
+# AppImage entry point for Super Mario Strikers (new-coke/strikers).
+#
+#   ./Strikers.AppImage              settings app (pick disc image, press Play)
+#   ./Strikers.AppImage --game ...   start the game directly
+#   ./Strikers.AppImage --udev       print the GameCube adapter udev rule
+#
+# The AppImage is read-only, so strikers.ini lives in
+# $XDG_CONFIG_HOME/strikers/strikers.ini instead of beside the game.
+HERE="$(dirname "$(readlink -f "$0")")"
+GAME_DIR="$HERE/opt/strikers"
+
+CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/strikers"
+mkdir -p "$CONFIG_DIR"
+[ -f "$CONFIG_DIR/strikers.ini" ] || cp "$GAME_DIR/strikers.ini.example" "$CONFIG_DIR/strikers.ini"
+: "${STRIKERS_CONFIG:=$CONFIG_DIR/strikers.ini}"
+export STRIKERS_CONFIG
+
+case "$1" in
+  --game)
+    shift
+    exec "$GAME_DIR/strikers" "$@" ;;
+  --udev)
+    cat "$GAME_DIR/51-gamecube-adapter.rules"
+    echo
+    echo "# install: ./$(basename "${APPIMAGE:-$0}") --udev | sudo tee /etc/udev/rules.d/51-gamecube-adapter.rules && sudo udevadm control --reload-rules" >&2
+    exit 0 ;;
+  --settings)
+    shift ;;
+esac
+exec "$GAME_DIR/strikers-settings" "$STRIKERS_CONFIG" "$@"
