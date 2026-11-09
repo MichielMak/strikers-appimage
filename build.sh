@@ -30,8 +30,20 @@ if [ -n "$TAG" ]; then
 else
   RELEASE_URL="https://github.com/new-coke/strikers/releases/latest/download/strikers-linux-$UPSTREAM_ARCH.tar.gz"
 fi
-TOOL_URL="https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-$ARCH.AppImage"
-RUNTIME_URL="https://github.com/AppImage/type2-runtime/releases/download/continuous/runtime-$ARCH"
+# Pinned releases with checksums, not the moving "continuous" builds, so every
+# AppImage is packed the same way.
+TOOL_VERSION=1.9.1
+RUNTIME_VERSION=20251108
+TOOL_URL="https://github.com/AppImage/appimagetool/releases/download/$TOOL_VERSION/appimagetool-$ARCH.AppImage"
+RUNTIME_URL="https://github.com/AppImage/type2-runtime/releases/download/$RUNTIME_VERSION/runtime-$ARCH"
+case "$ARCH" in
+  x86_64)
+    TOOL_SHA256=ed4ce84f0d9caff66f50bcca6ff6f35aae54ce8135408b3fa33abfc3cb384eb0
+    RUNTIME_SHA256=2fca8b443c92510f1483a883f60061ad09b46b978b2631c807cd873a47ec260d ;;
+  aarch64)
+    TOOL_SHA256=f0837e7448a0c1e4e650a93bb3e85802546e60654ef287576f46c71c126a9158
+    RUNTIME_SHA256=00cbdfcf917cc6c0ff6d3347d59e0ca1f7f45a6df1a428a0d6d8a78664d87444 ;;
+esac
 
 # Libraries the host must provide (AppImage excludelist, plus the GPU/audio
 # stack, which has to match the host's drivers).
@@ -84,8 +96,20 @@ fi
 PATCHELF="$SYSROOT/usr/bin/patchelf"
 
 # --- 3. appimagetool + runtime ------------------------------------------------
-[ -x "$BUILD/tools/appimagetool" ] || { curl -fSL -o "$BUILD/tools/appimagetool" "$TOOL_URL"; chmod +x "$BUILD/tools/appimagetool"; }
-[ -f "$BUILD/tools/runtime" ] || curl -fSL -o "$BUILD/tools/runtime" "$RUNTIME_URL"
+# fetch <url> <sha256> <file>: GitHub release downloads time out now and then,
+# hence the retries; a file that does not match its checksum is refused.
+fetch() {
+  if [ -f "$3" ] && echo "$2  $3" | sha256sum -c - >/dev/null 2>&1; then return 0; fi
+  curl -fsSL --retry 8 --retry-all-errors --retry-delay 5 -o "$3" "$1"
+  if ! echo "$2  $3" | sha256sum -c - >/dev/null 2>&1; then
+    echo "$1 does not match its pinned SHA-256" >&2
+    rm -f "$3"
+    exit 1
+  fi
+}
+fetch "$TOOL_URL" "$TOOL_SHA256" "$BUILD/tools/appimagetool"
+fetch "$RUNTIME_URL" "$RUNTIME_SHA256" "$BUILD/tools/runtime"
+chmod +x "$BUILD/tools/appimagetool"
 
 # --- 4. AppDir -----------------------------------------------------------------
 echo ">> assembling AppDir"
