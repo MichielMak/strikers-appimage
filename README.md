@@ -49,4 +49,9 @@ with the releases in this repo. For each missing one it builds x86_64 (on `ubunt
 aarch64 (on `ubuntu-24.04-arm`) and publishes both under the upstream tag. Upstream prereleases
 stay prereleases here, and only upstream's latest stable release is marked latest.
 
+Upstream ships its own AppImages since [new-coke/strikers#49](https://github.com/new-coke/strikers/pull/49).
+Tags where upstream has both (`strikers-linux-x86_64.AppImage` and `strikers-linux-arm64.AppImage`)
+are skipped, so this repo only builds when upstream's AppImage step failed or for older releases.
+A manual run with a tag always builds.
+
 Rebuild one tag by hand: Actions, "AppImage per upstream release", Run workflow, enter the tag.
