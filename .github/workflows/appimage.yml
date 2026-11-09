@@ -36,16 +36,24 @@ jobs:
           INPUT_TAG: ${{ inputs.tag }}
         run: |
           set -euo pipefail
-          # Newest 5 upstream releases with Linux tarballs for both arches.
+          # Newest 5 upstream releases with Linux tarballs for both arches, and
+          # whether upstream already ships both AppImages for them (it does since
+          # new-coke/strikers#49; its AppImage step may fail and leave them out).
           gh api "repos/$UPSTREAM/releases?per_page=20" --jq '
             [.[] | select(.draft | not)
-                 | select([.assets[].name] | (index("strikers-linux-x86_64.tar.gz") and index("strikers-linux-arm64.tar.gz")))
-                 | {tag: .tag_name, prerelease: .prerelease}][:5]' > upstream.json
+                 | [.assets[].name] as $a
+                 | select($a | (index("strikers-linux-x86_64.tar.gz") and index("strikers-linux-arm64.tar.gz")))
+                 | {tag: .tag_name, prerelease: .prerelease,
+                    upstream_appimage: ($a | (index("strikers-linux-x86_64.AppImage") and index("strikers-linux-arm64.AppImage")))}][:5]' > upstream.json
+          skipped=$(jq -r '[.[] | select(.upstream_appimage) | .tag] | join(" ")' upstream.json)
+          if [ -n "$skipped" ]; then echo "upstream ships AppImages, skipping: $skipped"; fi
           gh api "repos/$GITHUB_REPOSITORY/releases?per_page=100" --jq '[.[].tag_name]' > ours.json
           if [ -n "$INPUT_TAG" ]; then
             gh api "repos/$UPSTREAM/releases/tags/$INPUT_TAG" --jq '[{tag: .tag_name, prerelease: .prerelease}]' > todo.json
           else
-            jq -c --slurpfile ours ours.json '[.[] | select(.tag as $t | $ours[0] | index($t) | not)]' upstream.json > todo.json
+            jq -c --slurpfile ours ours.json '[.[] | select(.upstream_appimage | not)
+                                                   | select(.tag as $t | $ours[0] | index($t) | not)
+                                                   | {tag, prerelease}]' upstream.json > todo.json
           fi
           latest=$(gh api "repos/$UPSTREAM/releases/latest" --jq .tag_name)
           echo "to build: $(cat todo.json)"
